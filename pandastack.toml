@@ -1,0 +1,142 @@
+# MavadoClaw-Worker PandaStack Configuration
+# Services: OmniRoute (port 3000), 9Router (port 8081), OpenHands (port 3001), MavadoClaw (port 8080)
+
+[stack]
+name = "mavadoclaw-worker"
+version = "2.0.0"
+
+# ==================== OmniRoute - AI Gateway ====================
+[services.omniroute]
+image = "node:20-slim"
+port = 3000
+command = ["node", "dev/run-standalone.mjs"]
+workdir = "/app"
+
+[services.omniroute.build]
+context = "."
+dockerfile = "Dockerfile"
+target = "omniroute"
+
+[services.omniroute.environment]
+NODE_ENV = "production"
+PORT = "3000"
+
+[services.omniroute.healthcheck]
+test = ["CMD", "curl", "-f", "http://localhost:3000/health"]
+interval = "30s"
+timeout = "10s"
+retries = 3
+start_period = "15s"
+
+[services.omniroute.volumes]
+"omniroute_data" = "/app"
+
+[services.omniroute.networks]
+- "mavado-net"
+
+# ==================== 9Router - Backup Router ====================
+[services.9router]
+image = "node:20-slim"
+port = 8081
+command = ["node", "custom-server.js"]
+workdir = "/app"
+
+[services.9router.build]
+context = "."
+dockerfile = "Dockerfile"
+target = "ninerouter"
+
+[services.9router.environment]
+NODE_ENV = "production"
+PORT = "8081"
+
+[services.9router.healthcheck]
+test = ["CMD", "curl", "-f", "http://localhost:8081/health"]
+interval = "30s"
+timeout = "10s"
+retries = 3
+start_period = "15s"
+
+[services.9router.volumes]
+"ninerouter_data" = "/app"
+
+[services.9router.networks]
+- "mavado-net"
+
+# ==================== OpenHands - AI Coding Agent ====================
+[services.openhands]
+image = "docker.all-hands.dev/all-hands/openhands:main"
+port = 3001
+workdir = "/workspace"
+
+[services.openhands.environment]
+PYTHONUNBUFFERED = "1"
+WORKSPACE_BASE = "/workspace"
+SANDBOX_RUNTIME_CONTAINER_IMAGE = "docker.all-hands.dev/all-hands/runtime:0.23-nikolaik"
+LLM_API_KEY = "not-needed"
+LLM_MODEL = "auto"
+LLM_BASE_URL = "http://omniroute:3000/v1"
+LITELLM_LOCAL_MODEL_COST_MAP = "True"
+OPENHands_API_KEY = "not-needed"
+
+[services.openhands.healthcheck]
+test = ["CMD", "curl", "-f", "http://localhost:3001/"]
+interval = "30s"
+timeout = "10s"
+retries = 3
+start_period = "30s"
+
+[services.openhands.volumes]
+"openhands_data" = "/workspace"
+"/var/run/docker.sock" = "/var/run/docker.sock"
+
+[services.openhands.networks]
+- "mavado-net"
+
+# ==================== MavadoClaw - CEO/Orchestrator ====================
+[services.mavado]
+image = "python:3.11-slim"
+port = 8080
+command = ["python", "app.py"]
+workdir = "/app"
+
+[services.mavado.build]
+context = "."
+dockerfile = "Dockerfile"
+target = "mavado"
+
+[services.mavado.environment]
+PYTHONUNBUFFERED = "1"
+PORT = "8080"
+HOSTNAME = "0.0.0.0"
+OMNIROUTE_URL = "http://omniroute:3000"
+NINEROUTER_URL = "http://9router:8081"
+
+[services.mavado.healthcheck]
+test = ["CMD", "curl", "-f", "http://localhost:8080/health"]
+interval = "30s"
+timeout = "10s"
+retries = 3
+start_period = "15s"
+
+[services.mavado.depends_on]
+- "omniroute"
+- "9router"
+- "openhands"
+
+[services.mavado.volumes]
+"mavado_data" = "/app"
+
+[services.mavado.networks]
+- "mavado-net"
+
+# ==================== Volumes ====================
+[volumes]
+omniroute_data = {}
+ninerouter_data = {}
+openhands_data = {}
+mavado_data = {}
+
+# ==================== Networks ====================
+[networks]
+mavado-net = { driver = "bridge" }

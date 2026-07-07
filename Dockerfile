@@ -1,0 +1,132 @@
+# ==============================================================================
+# MavadoClaw-Worker Dockerfile
+# Multi-stage build: OmniRoute + 9Router + OpenHands + MavadoClaw + Cloudflare Edge
+# ==============================================================================
+
+# ==================== Stage 1: Clone OmniRoute source from GitHub ====================
+FROM alpine:3.20 AS omniroute-src
+
+RUN apk add --no-cache git
+RUN git clone --depth 1 https://github.com/diegosoapw/OmniRoute.git /omniroute
+
+# ==================== Stage 2: Clone 9Router source from GitHub ====================
+FROM alpine:3.20 AS ninerouter-src
+
+RUN apk add --no-cache git
+RUN git clone --depth 1 https://github.com/decoulua/9router.git /9router
+
+# ==================== Stage 3: Build OmniRoute ====================
+FROM node:20-slim AS omniroute-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=omniroute-src /omniroute ./
+RUN npm install --legacy-peer-deps
+
+ENV NODE_ENV=production
+ENV PORT=3000
+ARG OMNIROUTE_BUILD_MEMORY_MB=4096
+ENV NODE_OPTIONS="--max-old-space-size=${OMNIROUTE_BUILD_MEMORY_MB}"
+
+RUN npm run build
+
+# ==================== Stage 4: Build 9Router ====================
+FROM node:20-slim AS ninerouter-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 make g++ git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=ninerouter-src /9router ./
+RUN npm install
+
+ENV NODE_ENV=production
+ENV PORT=8081
+ARG NINEROUTER_BUILD_MEMORY_MB=4096
+ENV NODE_OPTIONS="--max-old-space-size=${NINEROUTER_BUILD_MEMORY_MB}"
+
+RUN npm run build
+
+# ==================== Stage 5: OmniRoute Runner ====================
+FROM node:20-slim AS omniroute
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=omniroute-builder /app/.next/standalone ./
+COPY --from=omniroute-builder /app/.next/static ./.next/static
+COPY --from=omniroute-builder /app/public ./public
+
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:3000/health || curl -f http://localhost:3000/ || exit 1
+
+CMD ["node", "server.js"]
+
+# ==================== Stage 6: 9Router Runner ====================
+FROM node:20-slim AS ninerouter
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=ninerouter-builder /app/.next/standalone ./
+COPY --from=ninerouter-builder /app/.next/static ./.next/static
+COPY --from=ninerouter-builder /app/public ./public
+
+ENV NODE_ENV=production
+ENV PORT=8081
+ENV HOSTNAME=0.0.0.0
+
+EXPOSE 8081
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8081/health || curl -f http://localhost:8081/ || exit 1
+
+CMD ["node", "server.js"]
+
+# ==================== Stage 7: MavadoClaw (Final) ====================
+FROM python:3.11-slim AS mavado
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl git supervisor \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+COPY app.py ./
+COPY config.json.template ./
+COPY supervisor.sh ./
+COPY pandastack.toml ./
+COPY plugins/ ./plugins/
+COPY cloudflare-worker/ ./cloudflare-worker/
+COPY hf-space/ ./hf-space/
+COPY scripts/ ./scripts/
+
+RUN chmod +x supervisor.sh
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PORT=8080
+ENV HOSTNAME=0.0.0.0
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+CMD ["./supervisor.sh", "start"]
