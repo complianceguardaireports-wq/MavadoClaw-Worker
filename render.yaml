@@ -1,0 +1,29 @@
+services:
+  # ==================== Backend API ====================
+  - type: web
+    name: mavadoclaw-backend
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: PORT
+        value: 8080
+
+  # ==================== Gradio Frontend ====================
+  - type: web
+    name: mavadoclaw-frontend
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r hf-space/requirements.txt
+    startCommand: cd hf-space && python app.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: MAVADOCLAW_API_URL
+        value: https://mavadoclaw-backend.onrender.com

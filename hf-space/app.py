@@ -5,8 +5,8 @@ Deploy this as a HuggingFace Docker Space for web-based access
 import json
 import os
 import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import asyncio
+from typing import List, Dict, Any
 
 try:
     import gradio as gr
@@ -14,34 +14,71 @@ try:
 except ImportError:
     HAS_GRADIO = False
 
-from app import app, ChatRequest, ChatMessage, load_config
+try:
+    import aiohttp
+    HAS_AIOHTTP = True
+except ImportError:
+    HAS_AIOHTTP = False
 
-
-CONFIG = load_config()
+# HF Space environment variables
+MAVADOCLAW_API_URL = os.environ.get("MAVADOCLAW_API_URL", "http://localhost:8080")
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 
 
 async def chat_fn(message, history, model, temperature):
+    """Send chat message to MavadoClaw backend"""
+    if not MAVADOCLAW_API_URL:
+        return "MAVADOCLAW_API_URL not configured. Set it in Space secrets."
+
     messages = []
     for h in history:
-        messages.append(ChatMessage(role=h["role"], content=h["content"]))
-    messages.append(ChatMessage(role="user", content=message))
+        if isinstance(h, dict):
+            messages.append({"role": h.get("role", "user"), "content": h.get("content", "")})
+    messages.append({"role": "user", "content": message})
+
+    payload = {
+        "messages": messages,
+        "model": model,
+        "temperature": temperature,
+        "stream": False,
+    }
+
+    headers = {"Content-Type": "application/json"}
+    if ADMIN_TOKEN:
+        headers["Authorization"] = f"Bearer {ADMIN_TOKEN}"
 
     try:
-        from app import _get_ai_infra
-        infra = await _get_ai_infra()
-        if infra:
-            result = await infra.chat_completion(
-                [m.model_dump() for m in messages],
-                model=model,
-                temperature=temperature,
+        if HAS_AIOHTTP:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{MAVADOCLAW_API_URL}/api/chat",
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        if isinstance(result, dict) and "choices" in result:
+                            return result["choices"][0]["message"]["content"]
+                        return str(result)
+                    else:
+                        text = await resp.text()
+                        return f"Error {resp.status}: {text}"
+        else:
+            import urllib.request
+            req = urllib.request.Request(
+                f"{MAVADOCLAW_API_URL}/api/chat",
+                data=json.dumps(payload).encode(),
+                headers=headers,
+                method="POST",
             )
-            if isinstance(result, dict) and "choices" in result:
-                return result["choices"][0]["message"]["content"]
-            return str(result)
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                result = json.loads(resp.read().decode())
+                if isinstance(result, dict) and "choices" in result:
+                    return result["choices"][0]["message"]["content"]
+                return str(result)
     except Exception as e:
-        return f"Error: {str(e)}"
-
-    return "AI infrastructure not available. Please ensure OmniRoute and 9Router are running."
+        return f"Connection error: {str(e)}\n\nEnsure MavadoClaw backend is running at {MAVADOCLAW_API_URL}"
 
 
 def build_ui():
@@ -92,8 +129,8 @@ def build_ui():
                     """
                 )
 
-        def respond(message, history):
-            response = chat_fn(message, history, model.value, temperature.value)
+        async def respond(message, history):
+            response = await chat_fn(message, history, model.value, temperature.value)
             history.append({"role": "user", "content": message})
             history.append({"role": "assistant", "content": response})
             return "", history
@@ -107,9 +144,23 @@ def build_ui():
 
 if __name__ == "__main__":
     demo = build_ui()
+    port = int(os.environ.get("PORT", 7860))
     if demo:
-        demo.launch(server_name="0.0.0.0", server_port=7860)
+        demo.launch(server_name="0.0.0.0", server_port=port)
     else:
         print("Starting without Gradio UI. Use API directly.")
+        from fastapi import FastAPI
+        from fastapi.responses import JSONResponse
+
+        app = FastAPI(title="MavadoClaw API (Fallback)")
+
+        @app.get("/")
+        async def root():
+            return JSONResponse({"status": "running", "message": "Gradio UI not available. Use /api/chat endpoint."})
+
+        @app.get("/health")
+        async def health():
+            return JSONResponse({"status": "healthy"})
+
         import uvicorn
-        uvicorn.run(app, host="0.0.0.0", port=7860)
+        uvicorn.run(app, host="0.0.0.0", port=port)

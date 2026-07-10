@@ -4,6 +4,41 @@
  * Free tier: 10,000 neurons/day, 100,000 requests/day
  */
 
+export class AgentState {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    const url = new URL(request.url);
+
+    if (url.pathname === "/state" && request.method === "GET") {
+      const data = await this.state.storage.get("state");
+      return new Response(JSON.stringify(data || {}), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url.pathname === "/state" && request.method === "POST") {
+      const body = await request.json();
+      await this.state.storage.put("state", body);
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url.pathname === "/state" && request.method === "DELETE") {
+      await this.state.storage.deleteAll();
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response("Not found", { status: 404 });
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);

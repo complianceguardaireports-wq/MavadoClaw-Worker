@@ -212,13 +212,6 @@ async def chat(request: ChatRequest):
                 detail=f"Invalid role: {msg.role}. Must be system, user, or assistant",
             )
 
-    infra = await _get_ai_infra()
-    if not infra:
-        raise HTTPException(
-            status_code=503,
-            detail="AI infrastructure unavailable (OmniRoute / 9Router)",
-        )
-
     system_msg = CONFIG.get(
         "character_desc",
         "You are MavadoClaw, CEO of an autonomous AI Company.",
@@ -231,31 +224,41 @@ async def chat(request: ChatRequest):
     temperature = request.temperature or CONFIG.get("temperature", 0.7)
     max_tokens = request.max_tokens or CONFIG.get("conversation_max_tokens", 4096)
 
-    if request.stream:
-        async def generate():
-            async for chunk in infra.stream_chat_completion(
-                messages, model, temperature=temperature, max_tokens=max_tokens
-            ):
-                yield json.dumps(chunk) + "\n"
+    # Try primary AI infrastructure (OmniRoute / 9Router)
+    infra = await _get_ai_infra()
+    if infra:
+        try:
+            if request.stream:
+                async def generate():
+                    async for chunk in infra.stream_chat_completion(
+                        messages, model, temperature=temperature, max_tokens=max_tokens
+                    ):
+                        yield json.dumps(chunk) + "\n"
+                return StreamingResponse(generate(), media_type="application/x-ndjson")
 
-        return StreamingResponse(generate(), media_type="application/x-ndjson")
+            result = await infra.chat_completion(messages, model, temperature, max_tokens)
+            return result
+        except Exception as exc:
+            logger.warning("Primary AI infra failed, trying free fallback: %s", exc)
 
+    # Fallback: free HuggingFace inference (no API key needed)
     try:
-        result = await infra.chat_completion(
-            messages, model, temperature, max_tokens
-        )
-        return result
+        from plugins.free_inference import chat_completion as free_chat, is_available
+        if is_available():
+            logger.info("Using free inference fallback (HuggingFace)")
+            result = await free_chat(messages, temperature=temperature, max_tokens=max_tokens)
+            return result
     except Exception as exc:
-        logger.error("Chat completion failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.error("Free inference fallback also failed: %s", exc)
+
+    raise HTTPException(
+        status_code=503,
+        detail="AI infrastructure unavailable (all providers failed)",
+    )
 
 
 @app.post("/api/task")
 async def execute_task(request: TaskRequest):
-    infra = await _get_ai_infra()
-    if not infra:
-        raise HTTPException(status_code=503, detail="AI infrastructure unavailable")
-
     task_context = request.context or {}
     task_context["task"] = request.task
     task_context["priority"] = request.priority
@@ -281,17 +284,24 @@ async def execute_task(request: TaskRequest):
             {"role": "user", "content": request.task},
         ]
 
+    # Try primary AI infra, then fallback
+    infra = await _get_ai_infra()
+    if infra:
+        try:
+            result = await infra.chat_completion(messages, "auto", 0.7, 4096)
+            return {"status": "completed", "agent": request.agent, "task": request.task, "result": result}
+        except Exception as exc:
+            logger.warning("Primary AI infra failed for task, trying fallback: %s", exc)
+
     try:
-        result = await infra.chat_completion(messages, "auto", 0.7, 4096)
-        return {
-            "status": "completed",
-            "agent": request.agent,
-            "task": request.task,
-            "result": result,
-        }
+        from plugins.free_inference import chat_completion as free_chat, is_available
+        if is_available():
+            result = await free_chat(messages, max_tokens=2048)
+            return {"status": "completed (free)", "agent": request.agent, "task": request.task, "result": result}
     except Exception as exc:
-        logger.error("Task execution failed: %s", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.error("Free inference fallback also failed: %s", exc)
+
+    raise HTTPException(status_code=503, detail="AI infrastructure unavailable (all providers failed)")
 
 
 @app.post("/api/deploy")
