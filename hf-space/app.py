@@ -1,12 +1,14 @@
 """
 MavadoClaw HF Space - Gradio Interface
-Deploy this as a HuggingFace Docker Space for web-based access
 """
 import json
 import os
 import sys
 import asyncio
 from typing import List, Dict, Any
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+import uvicorn
 
 try:
     import gradio as gr
@@ -20,15 +22,13 @@ try:
 except ImportError:
     HAS_AIOHTTP = False
 
-# HF Space environment variables
 MAVADOCLAW_API_URL = os.environ.get("MAVADOCLAW_API_URL", "http://localhost:8080")
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 
 
 async def chat_fn(message, history, model, temperature):
-    """Send chat message to MavadoClaw backend"""
     if not MAVADOCLAW_API_URL:
-        return "MAVADOCLAW_API_URL not configured. Set it in Space secrets."
+        return "MAVADOCLAW_API_URL not configured."
 
     messages = []
     for h in history:
@@ -78,7 +78,7 @@ async def chat_fn(message, history, model, temperature):
                     return result["choices"][0]["message"]["content"]
                 return str(result)
     except Exception as e:
-        return f"Connection error: {str(e)}\n\nEnsure MavadoClaw backend is running at {MAVADOCLAW_API_URL}"
+        return f"Connection error: {str(e)}\n\nEnsure backend is running at {MAVADOCLAW_API_URL}"
 
 
 def build_ui():
@@ -142,25 +142,34 @@ def build_ui():
     return demo
 
 
+# ==================== FastAPI App ====================
+app = FastAPI(title="MavadoClaw Frontend")
+
+
+@app.middleware("http")
+async def health_check(request: Request, call_next):
+    if request.url.path == "/health":
+        return JSONResponse({"status": "healthy"})
+    return await call_next(request)
+
+
+@app.get("/api/info")
+async def info():
+    return JSONResponse({
+        "app": "MavadoClaw Frontend",
+        "gradio": HAS_GRADIO,
+        "backend": MAVADOCLAW_API_URL,
+    })
+
+
+# Mount Gradio at root if available
+demo = build_ui()
+if demo:
+    try:
+        app = gr.mount_gradio_app(app, demo, path="/")
+    except (ImportError, AttributeError):
+        pass
+
 if __name__ == "__main__":
-    demo = build_ui()
     port = int(os.environ.get("PORT", 7860))
-    if demo:
-        demo.launch(server_name="0.0.0.0", server_port=port)
-    else:
-        print("Starting without Gradio UI. Use API directly.")
-        from fastapi import FastAPI
-        from fastapi.responses import JSONResponse
-
-        app = FastAPI(title="MavadoClaw API (Fallback)")
-
-        @app.get("/")
-        async def root():
-            return JSONResponse({"status": "running", "message": "Gradio UI not available. Use /api/chat endpoint."})
-
-        @app.get("/health")
-        async def health():
-            return JSONResponse({"status": "healthy"})
-
-        import uvicorn
-        uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port)
