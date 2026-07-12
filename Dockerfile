@@ -7,13 +7,13 @@
 FROM alpine:3.20 AS omniroute-src
 
 RUN apk add --no-cache git
-RUN git clone --depth 1 https://github.com/diegosoapw/OmniRoute.git /omniroute
+RUN git clone --depth 1 https://github.com/diegosouzapw/OmniRoute.git /omniroute
 
 # ==================== Stage 2: Clone 9Router source from GitHub ====================
 FROM alpine:3.20 AS ninerouter-src
 
 RUN apk add --no-cache git
-RUN git clone --depth 1 https://github.com/decoulua/9router.git /9router
+RUN git clone --depth 1 https://github.com/decolua/9router.git /9router
 
 # ==================== Stage 3: Build OmniRoute ====================
 FROM node:20-slim AS omniroute-builder

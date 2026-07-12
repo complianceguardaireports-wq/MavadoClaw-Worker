@@ -34,12 +34,14 @@ services:
     runtime: docker
     region: oregon
     plan: free
-    dockerfilePath: ./Dockerfile.omniroute
+    dockerfilePath: Dockerfile.omniroute
     envVars:
       - key: PORT
         value: 20128
       - key: OMNIROUTE_MEMORY_MB
         value: 512
+      - key: DISABLE_OMNIROUTE_AUTH
+        value: "true"
 
   # ==================== 9Router Backup ====================
   - type: web
@@ -47,7 +49,7 @@ services:
     runtime: docker
     region: oregon
     plan: free
-    dockerfilePath: ./Dockerfile.ninerouter
+    dockerfilePath: Dockerfile.ninerouter
     envVars:
       - key: PORT
         value: 20128
