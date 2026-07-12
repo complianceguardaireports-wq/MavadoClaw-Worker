@@ -27,3 +27,27 @@ services:
         value: 3.11.0
       - key: MAVADOCLAW_API_URL
         value: https://mavadoclaw-backend.onrender.com
+
+  # ==================== OmniRoute AI Gateway ====================
+  - type: web
+    name: omniroute
+    runtime: docker
+    region: oregon
+    plan: free
+    dockerfilePath: ./Dockerfile.omniroute
+    envVars:
+      - key: PORT
+        value: 20128
+      - key: OMNIROUTE_MEMORY_MB
+        value: 512
+
+  # ==================== 9Router Backup ====================
+  - type: web
+    name: ninerouter
+    runtime: docker
+    region: oregon
+    plan: free
+    dockerfilePath: ./Dockerfile.ninerouter
+    envVars:
+      - key: PORT
+        value: 20128
