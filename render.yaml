@@ -31,27 +31,23 @@ services:
   # ==================== OmniRoute AI Gateway ====================
   - type: web
     name: omniroute
-    repo: https://github.com/diegosouzapw/OmniRoute
     runtime: docker
     region: oregon
     plan: free
-    dockerfilePath: ./Dockerfile
-    healthCheckPath: /health
+    dockerfilePath: ./Dockerfile.omniroute
     envVars:
       - key: PORT
         value: 20128
       - key: OMNIROUTE_MEMORY_MB
         value: 512
 
-  # ==================== 9Router Backup ====================
+  # ==================== 9Router Backup (renamed - no digit prefix) ====================
   - type: web
-    name: 9router
-    repo: https://github.com/decolua/9router
+    name: ninerouter
     runtime: docker
     region: oregon
     plan: free
-    dockerfilePath: ./Dockerfile
-    healthCheckPath: /health
+    dockerfilePath: ./Dockerfile.ninerouter
     envVars:
       - key: PORT
         value: 20128
